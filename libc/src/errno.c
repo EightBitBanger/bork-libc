@@ -1,3 +1,4 @@
+
 #include <errno.h>
 #include <string.h>
 #include "internal.h"
@@ -23,6 +24,11 @@ int __errno_from_sys(int32_t e) {
         case SYS_ERANGE:       return ERANGE;
         case SYS_ENOSPC:       return ENOSPC;
         case SYS_EIO:          return EIO;
+        case SYS_EPERM:        return EPERM;
+        case SYS_ESRCH:        return ESRCH;
+        case SYS_EAGAIN:       return EAGAIN;
+        case SYS_EPIPE:        return EPIPE;
+        case SYS_EBADFMT:      return ENOEXEC;      // Not a loadable resource file
         default:               return EIO;
     }
 }
@@ -32,6 +38,7 @@ char* strerror(int e) {
         case 0:             return "Success";
         case EPERM:         return "Operation not permitted";
         case ENOENT:        return "No such file or directory";
+        case ESRCH:         return "No such process";
         case EINTR:         return "Interrupted system call";
         case EIO:           return "Input/output error";
         case E2BIG:         return "Argument list too long";
@@ -67,3 +74,4 @@ char* strerror(int e) {
         default:            return "Unknown error";
     }
 }
+

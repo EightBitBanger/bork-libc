@@ -1,3 +1,4 @@
+
 /*
  * Functional tests, linked like a real user program (crt0 + user.ld +
  * libc) and run on Linux through linux_shim.c. Runs inside an empty
@@ -17,6 +18,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <os/os.h>
+#include <os/security.h>
 
 int malloc_check(void);
 
@@ -418,6 +420,90 @@ static void test_dirs(void) {
 }
 
 //
+// Security clearance (the shim starts the process with every bit)
+//
+
+static void test_security(void) {
+    char text[96];
+    sec_mask_t m, prev;
+
+    CHECK(sec_get() == SEC_ALL && sec_is_admin() && sec_has(SEC_FILE | SEC_CONSOLE));
+    CHECK(sec_get_process(0, &m) == 0 && m == SEC_ALL);
+    CHECK(sec_get_process(getpid(), &m) == 0 && m == SEC_ALL);
+    CHECK(sec_get_process(12345, &m) == -1 && errno == ESRCH);
+    CHECK(sec_set_process(12345, SEC_ALL, NULL) == -1 && errno == ESRCH);
+    CHECK(sec_set(0x40000) == -1 && errno == EINVAL && sec_get() == SEC_ALL);
+    CHECK(sec_grant(0, 0x40000) == -1 && errno == EINVAL);
+
+    // Names
+    CHECK(sec_format(SEC_FILE_READ | SEC_CONSOLE, text, sizeof text) == 17 &&
+          strcmp(text, "file_read|console") == 0);
+    CHECK(sec_format(0, text, sizeof text) == 4 && strcmp(text, "none") == 0);
+    CHECK(sec_format(SEC_ADMIN | 0x8000, text, sizeof text) > 0 && strcmp(text, "admin|0x8000") == 0);
+    CHECK(sec_format(SEC_ALL, text, 6) == 59 && strcmp(text, "file_") == 0);      // Truncated like snprintf
+    CHECK(sec_bit_name(SEC_GFX_SCREEN) && strcmp(sec_bit_name(SEC_GFX_SCREEN), "gfx_screen") == 0);
+    CHECK(sec_bit_name(SEC_FILE) == NULL);
+    CHECK(sec_parse("file_read | GFX,admin", &m) == 0 && m == (SEC_FILE_READ | SEC_GFX | SEC_ADMIN));
+    CHECK(sec_parse("file console 0x10", &m) == 0 && m == (SEC_FILE | SEC_CONSOLE | SEC_GFX_SCREEN));
+    CHECK(sec_parse("all", &m) == 0 && m == SEC_ALL);
+    CHECK(sec_parse("", &m) == 0 && m == 0);
+    CHECK(sec_parse("file_read|bogus", &m) == -1 && errno == EINVAL);
+
+    // Files written while allowed, then checked call by call as bits go away
+    FILE* f = fopen("sec.txt", "w");
+    CHECK(f && fputs("secret", f) >= 0 && fclose(f) == 0);
+    int fd = open("sec.txt", O_RDWR);
+    CHECK(fd >= 3);
+
+    CHECK(sec_set_process(0, SEC_ALL & ~SEC_FILE_WRITE, &prev) == 0 && prev == SEC_ALL);
+    CHECK(!sec_has(SEC_FILE_WRITE) && sec_has(SEC_FILE_READ));
+    CHECK(fopen("sec.txt", "w") == NULL && errno == EPERM);
+    CHECK(fopen("new.txt", "r+") == NULL && errno == EPERM);
+    CHECK(open("new.txt", O_RDONLY | O_CREAT) == -1 && errno == EPERM);     // Creating is writing
+    CHECK(write(fd, "x", 1) == -1 && errno == EPERM);                       // Already open: still refused
+    CHECK(mkdir("secdir", 0755) == -1 && errno == EPERM);
+    CHECK(remove("sec.txt") == -1 && errno == EPERM);
+    CHECK(truncate("sec.txt", 0) == -1 && errno == EPERM);
+    CHECK(os_copy("sec.txt", "copy.txt") == -1 && errno == EPERM);
+    char b[8] = {0};
+    CHECK(read(fd, b, 6) == 6 && memcmp(b, "secret", 6) == 0);              // Reading is still fine
+    f = fopen("sec.txt", "r");
+    CHECK(f && fgets(b, sizeof b, f) && strcmp(b, "secret") == 0);
+    if (f) fclose(f);
+
+    CHECK(sec_revoke(0, SEC_FILE_READ) == 0 && !sec_has(SEC_FILE_READ));
+    struct stat st;
+    CHECK(lseek(fd, 0, SEEK_SET) == 0);                                     // Always allowed
+    CHECK(read(fd, b, 6) == -1 && errno == EPERM);
+    CHECK(stat("sec.txt", &st) == -1 && errno == EPERM);
+    CHECK(opendir(".") == NULL && errno == EPERM);
+    CHECK(chdir(".") == -1 && errno == EPERM);
+    char cwd[512];
+    CHECK(getcwd(cwd, sizeof cwd) != NULL);                                 // Always allowed
+    CHECK(close(fd) == 0);                                                  // Letting go always works
+
+    CHECK(sec_grant(0, SEC_FILE) == 0 && sec_get() == SEC_ALL);
+    CHECK(remove("sec.txt") == 0);
+
+    // Console
+    CHECK(sec_revoke(0, SEC_CONSOLE) == 0);
+    CHECK(os_print("hidden\n", 7) == -1 && errno == EPERM);
+    CHECK(write(1, "hidden\n", 7) == -1 && errno == EPERM);
+    CHECK(sec_grant(0, SEC_CONSOLE) == 0 && os_print("", 0) == 0);
+
+    // Admin dropping everything else, then itself: no way back
+    CHECK(sec_set(SEC_CONSOLE | SEC_ADMIN) == 0 && sec_get() == (SEC_CONSOLE | SEC_ADMIN));
+    CHECK(fopen("x.txt", "w") == NULL && errno == EPERM);
+    CHECK(sec_drop(SEC_ADMIN) == 0 && sec_get() == SEC_CONSOLE && !sec_is_admin());
+    CHECK(sec_set(SEC_ALL) == -1 && errno == EPERM);
+    CHECK(sec_grant(0, SEC_FILE_READ) == -1 && errno == EPERM);
+    CHECK(sec_revoke(0, SEC_CONSOLE) == -1 && errno == EPERM);              // Not even dropping
+    CHECK(sec_get_process(12345, &m) == -1 && errno == EPERM);              // Others: admin only
+    CHECK(sec_get_process(0, &m) == 0 && m == SEC_CONSOLE);                 // Ourselves: always
+    CHECK(printf("%s", "") == 0);                                           // Console still works
+}
+
+//
 // Exit path: atexit order and stdout flushed by exit()
 //
 
@@ -435,6 +521,7 @@ int main(int argc, char** argv) {
     test_misc();
     test_files();
     test_dirs();
+    test_security();       // Last: it ends by giving up everything but the console
 
     assert(1 + 1 == 2);
     fprintf(stderr, "stderr: unbuffered %s\n", "output");
@@ -444,3 +531,4 @@ int main(int argc, char** argv) {
     atexit(at_exit_2);
     return failures ? 1 : 0;
 }
+

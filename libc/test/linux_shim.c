@@ -1,3 +1,4 @@
+
 /*
  * Test-only: emulates the kernel's int 0x81 syscalls on 32-bit Linux
  * (int 0x80), so the real libc, crt0 and linker script can run on a
@@ -5,6 +6,14 @@
  * matters to the libc: fd 0-2 are the console, SYS_REMOVE takes files and
  * empty directories, SYS_RENAME is a same-directory rename that refuses an
  * existing name, SYS_READDIR is index based, opening a directory is EISDIR.
+ *
+ * IPC and input calls go to ipc_shim.c (the kernel's own ipc.c) when it is
+ * linked in.
+ *
+ * Security: one emulated process with a mask (starting at every bit), held
+ * to the same per-call requirements as the kernel's syscall_table and
+ * handlers. "Other processes" do not exist here: any pid but 0 and our own
+ * is SYS_ESRCH, after the same admin check the kernel makes first.
  */
 
 #include <stdint.h>
@@ -82,12 +91,78 @@ static int is_dir(const char* path) {
 
 static uint32_t brk_cur;
 
+static uint32_t sec_mask = SYS_SEC_VALID;
+
+// Fixed requirement per call (kernel: syscall_table[].requires)
+static uint32_t sec_requires(uint32_t n) {
+    switch (n) {
+        case SYS_PRINT:    return SYS_SEC_CONSOLE;
+        case SYS_READ: case SYS_FSTAT: case SYS_STAT: case SYS_READDIR: case SYS_CHDIR:
+                           return SYS_SEC_FILE_READ;
+        case SYS_MKDIR: case SYS_REMOVE: case SYS_RENAME: case SYS_TRUNCATE:
+                           return SYS_SEC_FILE_WRITE;
+        case SYS_COPY:     return SYS_SEC_FILE_READ | SYS_SEC_FILE_WRITE;
+        case SYS_SEC_SET:  return SYS_SEC_ADMIN;
+        case SYS_IPC_PIPE: case SYS_IPC_PORT_CREATE: case SYS_IPC_CONNECT: case SYS_IPC_ACCEPT:
+        case SYS_IPC_SEND: case SYS_IPC_RECV: case SYS_SHM_CREATE: case SYS_SHM_MAP: case SYS_SHM_UNMAP:
+                           return SYS_SEC_IPC;
+        case SYS_INPUT_OPEN: case SYS_INPUT_READ:
+                           return SYS_SEC_INPUT;
+        case SYS_RES_LOAD: return SYS_SEC_FILE_READ | SYS_SEC_GFX;
+        case SYS_RES_GET: case SYS_RES_INFO:
+                           return SYS_SEC_GFX;
+        default:           return (n >= SYS_GFX_INFO && n <= SYS_GFX_PRESENT) ? SYS_SEC_GFX : 0;
+    }
+}
+
+static int sec_allows(uint32_t bits) { return (sec_mask & bits) == bits; }
+
+// pid 0 or our own pid
+static int sec_is_self(uint32_t pid) { return pid == 0 || (int32_t)pid == lx(L_GETPID, 0, 0, 0); }
+
+// Graphics calls go to gfx_shim.c (the kernel's gfx code), when it is linked
+int32_t __test_gfx_syscall(uint32_t n, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4) __attribute__((weak));
+
+// IPC and input calls go to ipc_shim.c (the kernel's ipc.c), when it is linked
+int32_t __test_ipc_syscall(uint32_t n, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4) __attribute__((weak));
+
+// For ipc_shim.c
+uint32_t __test_sec_mask(void) { return sec_mask; }
+uint32_t __test_real_pid(void) { return (uint32_t)lx(L_GETPID, 0, 0, 0); }
+
 int32_t __test_syscall(uint32_t n, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5) {
-    (void)a4; (void)a5;
+    (void)a5;
+    if (n < SYS_COUNT && !sec_allows(sec_requires(n)))
+        return SYS_EPERM;
+
+    // The shim's screen is always "direct": present needs GFX_SCREEN, as the
+    // kernel's does when no window manager takes the surface
+    if (n == SYS_GFX_PRESENT && !sec_allows(SYS_SEC_GFX_SCREEN))
+        return SYS_EPERM;
+
+    if ((n >= SYS_GFX_INFO && n <= SYS_GFX_PRESENT) || (n >= SYS_RES_LOAD && n <= SYS_RES_INFO))
+        return __test_gfx_syscall ? __test_gfx_syscall(n, a1, a2, a3, a4) : SYS_ENOSYS;
+
+    if (n >= SYS_IPC_CLOSE && n <= SYS_INPUT_READ)
+        return __test_ipc_syscall ? __test_ipc_syscall(n, a1, a2, a3, a4) : SYS_ENOSYS;
+
     switch (n) {
         case SYS_EXIT:
             lx(L_EXIT_GROUP, a1, 0, 0);
             for (;;) { }
+
+        case SYS_SEC_GET:
+            if (!sec_is_self(a1) && !sec_allows(SYS_SEC_ADMIN)) return SYS_EPERM;
+            if (!sec_is_self(a1)) return SYS_ESRCH;
+            return (int32_t)sec_mask;
+
+        case SYS_SEC_SET: {
+            if (a2 & ~SYS_SEC_VALID) return SYS_EINVAL;
+            if (!sec_is_self(a1)) return SYS_ESRCH;
+            uint32_t old = sec_mask;
+            sec_mask = a2;
+            return (int32_t)old;
+        }
 
         case SYS_PRINT:
             return map_err(lx(L_WRITE, 1, a1, a2));
@@ -121,6 +196,9 @@ int32_t __test_syscall(uint32_t n, uint32_t a1, uint32_t a2, uint32_t a3, uint32
             const char* path = (const char*)a1;
             uint32_t f = a2;
             if (!(f & (SYS_O_READ | SYS_O_WRITE))) return SYS_EINVAL;
+            if (((f & SYS_O_READ) && !sec_allows(SYS_SEC_FILE_READ)) ||
+                ((f & (SYS_O_WRITE | SYS_O_CREATE)) && !sec_allows(SYS_SEC_FILE_WRITE)))
+                return SYS_EPERM;
             if (is_dir(path) == 1) return SYS_EISDIR;
             uint32_t lf = ((f & SYS_O_READ) && (f & SYS_O_WRITE)) ? 2 : (f & SYS_O_WRITE) ? 1 : 0;
             if (f & SYS_O_CREATE) lf |= LO_CREAT;
@@ -139,7 +217,11 @@ int32_t __test_syscall(uint32_t n, uint32_t a1, uint32_t a2, uint32_t a3, uint32
             return map_err(lx(L_READ, a1, a2, a3));
 
         case SYS_WRITE:
-            if (a1 == 1 || a1 == 2) return map_err(lx(L_WRITE, a1, a2, a3));
+            if (a1 == 1 || a1 == 2) {
+                if (!sec_allows(SYS_SEC_CONSOLE)) return SYS_EPERM;
+                return map_err(lx(L_WRITE, a1, a2, a3));
+            }
+            if (a1 >= SYS_FD_FIRST && !sec_allows(SYS_SEC_FILE_WRITE)) return SYS_EPERM;
             if (a1 < SYS_FD_FIRST) return SYS_EBADF;
             return map_err(lx(L_WRITE, a1, a2, a3));
 
@@ -241,3 +323,4 @@ int32_t __test_syscall(uint32_t n, uint32_t a1, uint32_t a2, uint32_t a3, uint32
             return SYS_ENOSYS;
     }
 }
+
