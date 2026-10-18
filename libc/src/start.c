@@ -3,6 +3,7 @@
  */
 
 #include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,8 +26,10 @@ static void (*atexit_fns[ATEXIT_MAX])(void);
 static int atexit_count = 0;
 
 /*
- * The kernel does not pass arguments yet, so main() gets argc = 0 and an
- * empty argv. Once it does, read them here from the initial stack.
+ * Arguments come from the kernel on the initial stack (crt0 passes where):
+ * argc, then argv[0..argc-1] and a NULL. A kernel that predates this leaves
+ * zeroed stack there, which reads as argc 0. Anything that does not look
+ * like a valid block is ignored rather than handed to main().
  */
 static char* empty_argv[] = { NULL };
 
@@ -34,7 +37,14 @@ static char* empty_argv[] = { NULL };
 static char  home_env[5 + SYS_PATH_MAX] = "HOME=";
 static char* start_environ[2] = { NULL, NULL };
 
-__attribute__((noreturn)) void __libc_start(void) {
+__attribute__((noreturn)) void __libc_start(uint32_t* block) {
+    int argc = 0;
+    char** argv = empty_argv;
+    if (block != NULL && block[0] > 0 && block[0] <= SYS_ARG_MAX && block[1 + block[0]] == 0) {
+        argc = (int)block[0];
+        argv = (char**)&block[1];
+    }
+
     // Before constructors, so they see it too. No home device: no HOME.
     if (os_gethome(home_env + 5, SYS_PATH_MAX) != NULL) {
         start_environ[0] = home_env;
@@ -45,7 +55,7 @@ __attribute__((noreturn)) void __libc_start(void) {
     for (init_fn* f = __init_array_start; f && f < __init_array_end; f++)
         (*f)();
 
-    exit(main(0, empty_argv, environ));
+    exit(main(argc, argv, environ));
 }
 
 int atexit(void (*fn)(void)) {
@@ -88,4 +98,5 @@ char* getenv(const char* name) {
     }
     return NULL;
 }
+
 

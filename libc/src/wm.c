@@ -70,21 +70,28 @@ static void enqueue(const wm_message_t* m) {
     q_count++;
 }
 
-// Read one message (0: none waiting, 1: read into *m, -1: error)
-static int read_one(wm_message_t* m) {
+// Read one message (0: none waiting, 1: read into *m, -1: error). A handle
+// that came with it goes to *handle (0 if none); with handle NULL it is closed.
+static int read_one(wm_message_t* m, int* handle) {
     union { wm_message_t msg; uint8_t raw[IPC_MSG_MAX]; } buf;
     ipc_msg_info_t info;
+    if (handle != NULL)
+        *handle = 0;
     for (;;) {
         info.handle = 0;
         ssize_t n = ipc_recv(wm_pipe, buf.raw, sizeof(buf.raw), &info);
         if (n < 0)
             return (errno == EAGAIN) ? 0 : -1;
-        if (info.handle > 0)
-            ipc_close(info.handle);     // The dwm sends none
         if ((size_t)n == sizeof(wm_message_t)) {
             *m = buf.msg;
+            if (handle != NULL)
+                *handle = info.handle;
+            else if (info.handle > 0)
+                ipc_close(info.handle);
             return 1;
         }
+        if (info.handle > 0)
+            ipc_close(info.handle);
         // Wrong size: not this protocol, skip it
     }
 }
@@ -93,7 +100,7 @@ static int read_one(wm_message_t* m) {
 static int pump(void) {
     wm_message_t m;
     while (q_count < QUEUE_MAX) {
-        int r = read_one(&m);
+        int r = read_one(&m, NULL);
         if (r <= 0)
             return r;
         if (m.kind == WM_MSG_EVENT)
@@ -120,13 +127,16 @@ static uint32_t take_seq(void) {
     return seq;
 }
 
-// Wait for the reply with this seq (the whole message into *out when given).
-// Events read meanwhile are queued. 0, or -1 with errno (the dwm's status,
-// or a connection error).
-static int await_reply(uint32_t seq, wm_window_t* window, wm_message_t* out) {
+// Wait for the reply with this seq (the whole message into *out when given,
+// a handle sent with it into *handle, else closed). Events read meanwhile are
+// queued. 0, or -1 with errno (the dwm's status, or a connection error).
+static int await_reply_handle(uint32_t seq, wm_window_t* window, wm_message_t* out, int* handle) {
+    if (handle != NULL)
+        *handle = 0;
     for (;;) {
         wm_message_t m;
-        int r = read_one(&m);
+        int got = 0;
+        int r = read_one(&m, &got);
         if (r < 0)
             return -1;
         if (r == 0) {
@@ -134,9 +144,11 @@ static int await_reply(uint32_t seq, wm_window_t* window, wm_message_t* out) {
                 return -1;
             continue;
         }
-        if (m.kind == WM_MSG_EVENT) {
-            enqueue(&m);
-        } else if (m.kind == WM_MSG_REPLY && m.seq == seq) {
+        if (m.kind == WM_MSG_REPLY && m.seq == seq) {
+            if (handle != NULL)
+                *handle = got;
+            else if (got > 0)
+                ipc_close(got);
             if (window) *window = m.window;
             if (out) *out = m;
             if (m.status != 0) {
@@ -145,8 +157,16 @@ static int await_reply(uint32_t seq, wm_window_t* window, wm_message_t* out) {
             }
             return 0;
         }
+        if (got > 0)
+            ipc_close(got);
+        if (m.kind == WM_MSG_EVENT)
+            enqueue(&m);
         // Other replies (to seq-less errors) and stray welcomes: ignored
     }
+}
+
+static int await_reply(uint32_t seq, wm_window_t* window, wm_message_t* out) {
+    return await_reply_handle(seq, window, out, NULL);
 }
 
 // Send, then wait for its reply
@@ -499,7 +519,8 @@ static bool take(wm_event_t* ev) {
         q_head = (q_head + 1) % QUEUE_MAX;
         q_count--;
 
-        if (m.event.type == WM_EVENT_THEME_CHANGED) {
+        if (m.event.type == WM_EVENT_THEME_CHANGED || m.event.type == WM_EVENT_CLIP_CHANGED ||
+            m.event.type == WM_EVENT_FS_CHANGED) {
             *ev = m.event;          // For the program, not one window (window 0)
             return true;
         }
@@ -609,4 +630,243 @@ int wm_menu_show(wm_window_t window, int32_t x, int32_t y, const wm_menu_item_t*
     if (send_raw(&q, sizeof(q), 0) < 0)
         return -1;
     return await_reply(q.seq, NULL, NULL);
+}
+
+// Connect without waiting when not connected yet (calls that need no window)
+static int ensure_connected(void) {
+    return (wm_pipe >= 0) ? 0 : wm_connect(0);
+}
+
+//
+// Notifications
+//
+
+int wm_notify_ex(uint32_t kind, const char* title, const char* message, uint32_t timeout_ms) {
+    if (kind != WM_NOTIFY_INFO && kind != WM_NOTIFY_ERROR) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (ensure_connected() < 0)
+        return -1;
+
+    wm_notify_request_t q;
+    memset(&q, 0, sizeof(q));
+    q.type       = WM_REQ_NOTIFY;
+    q.seq        = take_seq();
+    q.kind       = kind;
+    q.timeout_ms = timeout_ms;
+    if (title != NULL)
+        strlcpy(q.title, title, sizeof(q.title));
+    if (message != NULL)
+        strlcpy(q.text, message, sizeof(q.text));
+
+    if (send_raw(&q, sizeof(q), 0) < 0)
+        return -1;
+    return await_reply(q.seq, NULL, NULL);
+}
+
+int wm_notify(const char* title, const char* message) {
+    return wm_notify_ex(WM_NOTIFY_INFO, title, message, WM_NOTIFY_DEFAULT_MS);
+}
+
+//
+// Clipboard
+//
+
+static int clip_request(uint32_t type, const wm_clip_info_t* info, int attach,
+                        wm_message_t* reply, int* handle) {
+    if (ensure_connected() < 0)
+        return -1;
+    wm_clip_request_t q;
+    memset(&q, 0, sizeof(q));
+    q.type = type;
+    q.seq  = take_seq();
+    if (info != NULL)
+        q.info = *info;
+    if (send_raw(&q, sizeof(q), attach) < 0)
+        return -1;
+    return await_reply_handle(q.seq, NULL, reply, handle);
+}
+
+int wm_clip_set(const wm_clip_info_t* info, const void* data) {
+    if (info == NULL || info->type == WM_CLIP_NONE || info->size > WM_CLIP_MAX ||
+        (info->size > 0 && data == NULL)) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    // The data goes over in a shared block; the dwm copies it and lets go
+    int shm = 0;
+    if (info->size > 0) {
+        shm = shm_create(info->size);
+        void* p = (shm > 0) ? shm_map(shm) : NULL;
+        if (p == NULL) {
+            int err = errno;
+            if (shm > 0) ipc_close(shm);
+            errno = err;
+            return -1;
+        }
+        memcpy(p, data, info->size);
+    }
+
+    wm_clip_info_t send = *info;
+    send.format[WM_CLIP_FORMAT_MAX - 1] = '\0';
+    int r = clip_request(WM_REQ_CLIP_SET, &send, shm, NULL, NULL);
+    int err = errno;
+    if (shm > 0)
+        ipc_close(shm);         // Ours; the dwm got its own handle with the message
+    errno = err;
+    return r;
+}
+
+int wm_clip_set_text(const char* text) {
+    wm_clip_info_t info;
+    memset(&info, 0, sizeof(info));
+    info.type = WM_CLIP_TEXT;
+    info.size = (text != NULL) ? (uint32_t)strnlen(text, WM_CLIP_MAX + 1) : 0;
+    return wm_clip_set(&info, text);
+}
+
+int wm_clip_set_files(const char* const* paths, size_t count, bool cut) {
+    size_t total = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (paths == NULL || paths[i] == NULL || paths[i][0] != '/' || strchr(paths[i], '\n') != NULL) {
+            errno = EINVAL;
+            return -1;
+        }
+        total += strlen(paths[i]) + 1;
+    }
+    if (count == 0 || total > WM_CLIP_MAX) {
+        errno = (count == 0) ? EINVAL : E2BIG;
+        return -1;
+    }
+
+    char* list = (char*)malloc(total);
+    if (list == NULL)
+        return -1;
+    size_t at = 0;
+    for (size_t i = 0; i < count; i++) {
+        size_t n = strlen(paths[i]);
+        memcpy(list + at, paths[i], n);
+        at += n;
+        if (i + 1 < count)
+            list[at++] = '\n';
+    }
+
+    wm_clip_info_t info;
+    memset(&info, 0, sizeof(info));
+    info.type  = WM_CLIP_FILES;
+    info.flags = cut ? WM_CLIP_CUT : 0;
+    info.size  = (uint32_t)at;
+    int r = wm_clip_set(&info, list);
+    int err = errno;
+    free(list);
+    errno = err;
+    return r;
+}
+
+int wm_clip_set_image(const uint32_t* pixels, int32_t width, int32_t height) {
+    if (pixels == NULL || width <= 0 || height <= 0 ||
+        (uint64_t)width * (uint64_t)height * 4u > WM_CLIP_MAX) {
+        errno = EINVAL;
+        return -1;
+    }
+    wm_clip_info_t info;
+    memset(&info, 0, sizeof(info));
+    info.type   = WM_CLIP_IMAGE;
+    info.width  = (uint32_t)width;
+    info.height = (uint32_t)height;
+    info.size   = (uint32_t)width * (uint32_t)height * 4u;
+    return wm_clip_set(&info, pixels);
+}
+
+int wm_clip_set_binary(const char* format, const void* data, size_t size) {
+    if (size > WM_CLIP_MAX) {
+        errno = E2BIG;
+        return -1;
+    }
+    wm_clip_info_t info;
+    memset(&info, 0, sizeof(info));
+    info.type = WM_CLIP_BINARY;
+    info.size = (uint32_t)size;
+    if (format != NULL)
+        strlcpy(info.format, format, sizeof(info.format));
+    return wm_clip_set(&info, data);
+}
+
+int wm_clip_info(wm_clip_info_t* out) {
+    if (out == NULL) {
+        errno = EFAULT;
+        return -1;
+    }
+    wm_message_t m;
+    if (clip_request(WM_REQ_CLIP_INFO, NULL, 0, &m, NULL) < 0)
+        return -1;
+    *out = m.clip;
+    return 0;
+}
+
+void* wm_clip_get(wm_clip_info_t* out) {
+    wm_message_t m;
+    int shm = 0;
+    if (clip_request(WM_REQ_CLIP_GET, NULL, 0, &m, &shm) < 0)
+        return NULL;            // ENOENT: empty
+
+    uint32_t size = m.clip.size;
+    char* copy = (char*)malloc((size_t)size + 1);
+    if (copy == NULL) {
+        if (shm > 0) ipc_close(shm);
+        errno = ENOMEM;
+        return NULL;
+    }
+    if (size > 0) {
+        void* p = (shm > 0 && shm_size(shm) >= size) ? shm_map(shm) : NULL;
+        if (p == NULL) {
+            if (shm > 0) ipc_close(shm);
+            free(copy);
+            errno = EIO;
+            return NULL;
+        }
+        memcpy(copy, p, size);
+    }
+    copy[size] = '\0';
+    if (shm > 0)
+        ipc_close(shm);
+    if (out != NULL)
+        *out = m.clip;
+    return copy;
+}
+
+int wm_clip_clear(uint32_t serial) {
+    wm_clip_info_t info;
+    memset(&info, 0, sizeof(info));
+    info.serial = serial;
+    return clip_request(WM_REQ_CLIP_CLEAR, &info, 0, NULL, NULL);
+}
+
+const char* wm_clip_type_name(uint32_t type) {
+    switch (type) {
+        case WM_CLIP_NONE:   return "nothing";
+        case WM_CLIP_TEXT:   return "text";
+        case WM_CLIP_IMAGE:  return "an image";
+        case WM_CLIP_BINARY: return "data";
+        case WM_CLIP_FILES:  return "files";
+        default:             return "custom data";
+    }
+}
+
+//
+// Files changed
+//
+
+int wm_fs_changed(const char* path) {
+    if (ensure_connected() < 0)
+        return -1;
+    wm_path_request_t q;
+    memset(&q, 0, sizeof(q));
+    q.type = WM_REQ_FS_CHANGED;
+    q.seq  = 0;             // No reply wanted: just an announcement
+    if (path != NULL)
+        strlcpy(q.path, path, sizeof(q.path));
+    return send_raw(&q, sizeof(q), 0);
 }

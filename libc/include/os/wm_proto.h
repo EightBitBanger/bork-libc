@@ -28,6 +28,19 @@
  *   theme        WM_REQ_THEME is answered with the dwm's colors in the
  *                reply's `theme`; WM_EVENT_THEME_CHANGED (window 0) tells
  *                every program when they change.
+ *   notify       WM_REQ_NOTIFY (a wm_notify_request_t) shows a notification
+ *                in the dwm's corner stack; it needs no window. Replied to
+ *                like wm_request_t when seq is non-zero.
+ *   clipboard    WM_REQ_CLIP_SET / GET / INFO / CLEAR (a wm_clip_request_t):
+ *                one typed item for the whole desktop. SET carries the data
+ *                in a shared memory block attached to the message (the dwm
+ *                copies it and lets go); the reply to GET carries a fresh
+ *                block holding a copy. WM_EVENT_CLIP_CHANGED (window 0,
+ *                param = the new serial) tells every program it changed.
+ *   files        WM_REQ_FS_CHANGED (a wm_path_request_t): a program that
+ *                changed files (copied, moved, deleted) says where; every
+ *                program gets WM_EVENT_FS_CHANGED (window 0) to re-read what
+ *                it shows, and the desktop re-reads its icons.
  *   menus        a window created WM_STYLE_CONTEXT_MENU gets right clicks in
  *                its client area as WM_EVENT_CONTEXT_MENU (instead of the
  *                dwm opening its default window menu there) and answers with
@@ -41,7 +54,7 @@
 #include <stdint.h>
 
 #define WM_PORT_NAME            "sys.dwm"
-#define WM_PROTOCOL_VERSION     2
+#define WM_PROTOCOL_VERSION     1           // Bumped on every protocol change once 0.1.0 is out
 #define WM_TITLE_MAX            128         // Bytes, terminator included
 
 // Position the window manager picks (cascading)
@@ -83,6 +96,12 @@ enum {
     WM_REQ_FOCUS,           // window: raise and focus
     WM_REQ_THEME,           // -> REPLY.theme: the dwm's colors (always answered)
     WM_REQ_MENU,            // wm_menu_request_t (not wm_request_t): open a menu
+    WM_REQ_NOTIFY,          // wm_notify_request_t (not wm_request_t): a notification
+    WM_REQ_CLIP_SET,        // wm_clip_request_t, shm attached when info.size > 0
+    WM_REQ_CLIP_GET,        // wm_clip_request_t -> REPLY.clip, shm attached (ENOENT: empty)
+    WM_REQ_CLIP_INFO,       // wm_clip_request_t -> REPLY.clip (type NONE: empty)
+    WM_REQ_CLIP_CLEAR,      // wm_clip_request_t: info.serial (0: whatever is there)
+    WM_REQ_FS_CHANGED,      // wm_path_request_t: files changed at or below path
 };
 
 typedef struct {
@@ -114,6 +133,64 @@ typedef struct {
     wm_menu_entry_t items[WM_MENU_MAX_ITEMS];
 } wm_menu_request_t;
 
+// Notifications (WM_REQ_NOTIFY). Kinds and STICKY: same values as DWM_NOTIFY_*.
+#define WM_NOTIFY_INFO          0
+#define WM_NOTIFY_ERROR         1           // The theme's danger colors
+#define WM_NOTIFY_STICKY        0           // timeout_ms: stays until clicked
+#define WM_NOTIFY_DEFAULT_MS    5000
+#define WM_NOTIFY_MAX_MS        60000       // Longer timeouts are cut to this
+#define WM_NOTIFY_TITLE_MAX     64          // Bytes, terminator included
+#define WM_NOTIFY_TEXT_MAX      256
+
+// Exactly sizeof(wm_notify_request_t) bytes. Each program has at most 3
+// showing: a fourth pushes its oldest out. Status EINVAL for a bad kind.
+typedef struct {
+    uint32_t type;          // WM_REQ_NOTIFY
+    uint32_t seq;
+    uint32_t kind;          // WM_NOTIFY_*
+    uint32_t timeout_ms;    // WM_NOTIFY_STICKY, or how long it shows
+    char     title[WM_NOTIFY_TITLE_MAX];
+    char     text[WM_NOTIFY_TEXT_MAX];      // Word wrapped, at most 4 lines shown
+} wm_notify_request_t;
+
+// Clipboard item types: same values as DWM_CLIP_* (src/dwm/clipboard.h)
+#define WM_CLIP_NONE            0
+#define WM_CLIP_TEXT            1           // Text bytes, no terminator needed
+#define WM_CLIP_IMAGE           2           // width * height 0xAARRGGBB pixels, row after row
+#define WM_CLIP_BINARY          3           // Raw bytes; `format` names them
+#define WM_CLIP_FILES           4           // Absolute paths, '\n' between them
+#define WM_CLIP_USER            0x100       // And up: types programs agree on
+
+#define WM_CLIP_CUT             0x0001      // FILES: move on paste (the paster clears it)
+#define WM_CLIP_FORMAT_MAX      32          // Bytes, terminator included
+#define WM_CLIP_MAX             (4u << 20)  // Bytes of data
+
+typedef struct {
+    uint32_t type;                          // WM_CLIP_*
+    uint32_t flags;                         // WM_CLIP_CUT
+    uint32_t size;                          // Bytes of data
+    uint32_t width, height;                 // IMAGE: pixels
+    uint32_t serial;                        // Changes with every set / clear (set by the dwm)
+    uint32_t owner;                         // pid that set it, 0: the dwm (set by the dwm)
+    char     format[WM_CLIP_FORMAT_MAX];    // Optional name for the data ("audio/wav")
+} wm_clip_info_t;
+
+// Exactly sizeof(wm_clip_request_t) bytes, for all four WM_REQ_CLIP_*
+typedef struct {
+    uint32_t       type;
+    uint32_t       seq;
+    wm_clip_info_t info;    // SET: describes the attached data. CLEAR: serial.
+} wm_clip_request_t;
+
+#define WM_PATH_MAX             400         // Bytes, terminator included
+
+// Exactly sizeof(wm_path_request_t) bytes
+typedef struct {
+    uint32_t type;          // WM_REQ_FS_CHANGED
+    uint32_t seq;
+    char     path[WM_PATH_MAX];
+} wm_path_request_t;
+
 //
 // dwm -> program
 //
@@ -137,6 +214,8 @@ enum {
     WM_EVENT_CONTEXT_MENU,  // Right click in the client area (WM_STYLE_CONTEXT_MENU): x y
     WM_EVENT_MENU_COMMAND,  // A menu item was chosen: param = its id; x y = where it opened
     WM_EVENT_THEME_CHANGED, // window 0: the colors changed (ask again with WM_REQ_THEME)
+    WM_EVENT_CLIP_CHANGED,  // window 0: the clipboard changed; param = its new serial
+    WM_EVENT_FS_CHANGED,    // window 0: some program changed files: re-read folders shown
 };
 
 typedef struct {
@@ -200,12 +279,26 @@ typedef struct {
     union {
         wm_event_t event;   // EVENT
         wm_theme_t theme;   // REPLY to WM_REQ_THEME
+        wm_clip_info_t clip;// REPLY to WM_REQ_CLIP_GET / WM_REQ_CLIP_INFO
     };
 } wm_message_t;
 
 _Static_assert(sizeof(wm_request_t) <= 512 && sizeof(wm_menu_request_t) <= 512 &&
                sizeof(wm_message_t) <= 512, "protocol messages must fit IPC_MSG_MAX");
-_Static_assert(sizeof(wm_request_t) != sizeof(wm_menu_request_t),
+_Static_assert(sizeof(wm_notify_request_t) <= 512, "protocol messages must fit IPC_MSG_MAX");
+_Static_assert(sizeof(wm_path_request_t) <= 512 && sizeof(wm_path_request_t) != sizeof(wm_request_t) &&
+               sizeof(wm_path_request_t) != sizeof(wm_menu_request_t) &&
+               sizeof(wm_path_request_t) != sizeof(wm_notify_request_t) &&
+               sizeof(wm_path_request_t) != sizeof(wm_clip_request_t),
+               "the dwm tells requests apart by size");
+_Static_assert(sizeof(wm_clip_request_t) != sizeof(wm_request_t) &&
+               sizeof(wm_clip_request_t) != sizeof(wm_menu_request_t) &&
+               sizeof(wm_clip_request_t) != sizeof(wm_notify_request_t),
+               "the dwm tells requests apart by size");
+_Static_assert(sizeof(wm_request_t) != sizeof(wm_menu_request_t) &&
+               sizeof(wm_notify_request_t) != sizeof(wm_request_t) &&
+               sizeof(wm_notify_request_t) != sizeof(wm_menu_request_t),
                "the dwm tells requests apart by size");
 
 #endif
+

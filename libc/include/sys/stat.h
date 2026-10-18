@@ -48,5 +48,10 @@ int lstat(const char* restrict path, struct stat* restrict out);
 int fstat(int fd, struct stat* out);
 int mkdir(const char* path, mode_t mode);
 
+/* The kernel keeps one read/write/execute set per file: any of the three
+   groups' r, w or x bits in `mode` sets it. See os_set_permissions. */
+int chmod(const char* path, mode_t mode);
+
 #endif
+
 

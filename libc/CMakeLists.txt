@@ -13,7 +13,8 @@
 #
 # Options:
 #   LIBC_IMAGE_BASE      load address of programs (default 0x40000000)
-#   LIBC_BUILD_EXAMPLES  build examples/hello, gfx_demo, clearance, input_demo, sprite_demo, wm_demo, icon_view  (default ON standalone)
+#   LIBC_BUILD_EXAMPLES  build examples/hello, gfx_demo, clearance, input_demo, sprite_demo, wm_demo, icon_view,
+#                        args, spawn_demo  (default ON standalone)
 #   LIBC_BUILD_TESTS     host tests via ctest, Linux only (default OFF)
 
 cmake_minimum_required(VERSION 3.16)
@@ -131,6 +132,7 @@ set(_libc_sources
     src/ipc.c
     src/resource.c
     src/time.c
+    src/process.c
     src/wm.c)
 
 #
@@ -187,9 +189,12 @@ if(LIBC_BUILD_EXAMPLES)
     libc_add_program(sprite_demo examples/sprite_demo.c)
     libc_add_program(wm_demo examples/wm_demo.c)
     libc_add_program(icon_view examples/icon_view.c)
+    libc_add_program(args examples/args.c)
+    libc_add_program(spawn_demo examples/spawn_demo.c)
 endif()
 
 if(LIBC_BUILD_TESTS)
     enable_testing()
     add_subdirectory(test)
 endif()
+

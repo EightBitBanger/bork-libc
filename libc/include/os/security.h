@@ -22,6 +22,7 @@
  *                    manager takes the surface (needs SEC_GFX as well)
  *   SEC_IPC          os/ipc.h pipes, ports and shared memory
  *   SEC_INPUT        os/input.h: take the keyboard and mouse
+ *   SEC_EXEC         os/process.h: start other programs (spawn)
  *   SEC_ADMIN        change security masks: sec_set_process() on any
  *                    process, this one included, and reading other
  *                    processes' masks
@@ -53,6 +54,7 @@ typedef uint32_t sec_mask_t;
 #define SEC_GFX_SCREEN   SYS_SEC_GFX_SCREEN
 #define SEC_IPC          SYS_SEC_IPC
 #define SEC_INPUT        SYS_SEC_INPUT
+#define SEC_EXEC         SYS_SEC_EXEC
 #define SEC_ADMIN        SYS_SEC_ADMIN
 
 #define SEC_NONE         SYS_SEC_NONE
@@ -120,5 +122,6 @@ int sec_format(sec_mask_t mask, char* buf, size_t size);
 int sec_parse(const char* text, sec_mask_t* out);
 
 #endif
+
 
 

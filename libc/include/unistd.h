@@ -31,6 +31,7 @@ int     access(const char* path, int mode);
 int     chdir(const char* path);
 char*   getcwd(char* buf, size_t size);
 int     isatty(int fd);
+void    sync(void);         // os_sync() with the error dropped
 
 pid_t   getpid(void);
 void    _exit(int status) __attribute__((noreturn));
@@ -41,4 +42,5 @@ unsigned int sleep(unsigned int seconds);
 int     usleep(useconds_t usec);
 
 #endif
+
 

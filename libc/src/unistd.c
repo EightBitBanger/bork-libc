@@ -322,6 +322,34 @@ int os_copy(const char* src, const char* dest) {
     return __sys_ret(syscall2(SYS_COPY, (uint32_t)src, (uint32_t)dest));
 }
 
+int os_finfo(const char* path, os_finfo_t* out) {
+    if (path == NULL || out == NULL) {
+        errno = EFAULT;
+        return -1;
+    }
+    return __sys_ret(syscall2(SYS_FINFO, (uint32_t)path, (uint32_t)out));
+}
+
+int os_sync(void) {
+    return __sys_ret(syscall0(SYS_SYNC));
+}
+
+void sync(void) {
+    (void)os_sync();
+}
+
+int os_set_permissions(const char* path, uint32_t permissions) {
+    return __sys_ret(syscall2(SYS_CHMOD, (uint32_t)path, permissions));
+}
+
+int chmod(const char* path, mode_t mode) {
+    uint32_t p = 0;
+    if (mode & (S_IRUSR | S_IRGRP | S_IROTH)) p |= SYS_PERM_READ;
+    if (mode & (S_IWUSR | S_IWGRP | S_IWOTH)) p |= SYS_PERM_WRITE;
+    if (mode & (S_IXUSR | S_IXGRP | S_IXOTH)) p |= SYS_PERM_EXECUTE;
+    return os_set_permissions(path, p);
+}
+
 int os_rename(const char* path, const char* new_name) {
     return __sys_ret(syscall2(SYS_RENAME, (uint32_t)path, (uint32_t)new_name));
 }
@@ -362,4 +390,5 @@ char* os_syspath(const char* sub, char* out, size_t size) {
     }
     return out;
 }
+
 

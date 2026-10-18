@@ -27,7 +27,8 @@ int __errno_from_sys(int32_t e) {
         case SYS_ESRCH:        return ESRCH;
         case SYS_EAGAIN:       return EAGAIN;
         case SYS_EPIPE:        return EPIPE;
-        case SYS_EBADFMT:      return ENOEXEC;      // Not a loadable resource file
+        case SYS_EBADFMT:      return ENOEXEC;      // Not a loadable resource file / executable
+        case SYS_E2BIG:        return E2BIG;
         default:               return EIO;
     }
 }
@@ -73,5 +74,6 @@ char* strerror(int e) {
         default:            return "Unknown error";
     }
 }
+
 
 

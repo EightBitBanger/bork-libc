@@ -20,6 +20,7 @@ static const struct {
     { SEC_GFX_SCREEN, "gfx_screen" },
     { SEC_IPC,        "ipc"        },
     { SEC_INPUT,      "input"      },
+    { SEC_EXEC,       "exec"       },
     { SEC_ADMIN,      "admin"      },
 };
 
@@ -206,5 +207,6 @@ int sec_parse(const char* text, sec_mask_t* out) {
     *out = mask;
     return 0;
 }
+
 
 

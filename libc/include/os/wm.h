@@ -57,6 +57,32 @@
  *     }
  *     case WM_EVENT_MENU_COMMAND: if (ev.param == CMD_COPY) ...
  *
+ * Notifications: wm_notify() pops a short message up in the dwm's corner
+ * stack. It needs no window (it connects on first use), so a program with
+ * no UI can use it too. Keep it pithy: one-line title, a few words.
+ *
+ *     wm_notify("Saved", "notes.txt");
+ *     wm_notify_ex(WM_NOTIFY_ERROR, "Can't save", strerror(errno), WM_NOTIFY_STICKY);
+ *
+ * Clipboard: one item for the whole desktop, kept by the dwm, with a type
+ * that says what it holds (WM_CLIP_TEXT, _IMAGE, _BINARY with a format name,
+ * _FILES as '\n'-separated absolute paths, or WM_CLIP_USER + n for types
+ * programs agree on). Like wm_notify, it needs no window.
+ *
+ *     wm_clip_set_text("hello");
+ *     const char* paths[] = { "/mnt/ata0p1/a.txt" };
+ *     wm_clip_set_files(paths, 1, true);                // cut: move on paste
+ *
+ *     wm_clip_info_t info;
+ *     char* data = wm_clip_get(&info);                  // NULL / ENOENT: empty
+ *     if (data && info.type == WM_CLIP_TEXT) ... data is 0-terminated too
+ *     free(data);
+ *     if (info.flags & WM_CLIP_CUT) wm_clip_clear(info.serial);   // after moving
+ *
+ * wm_clip_info() says what is there without copying the data (for enabling
+ * a Paste item). WM_EVENT_CLIP_CHANGED (ev.window 0) arrives when it changes.
+ * Every program with SEC_IPC can read it: don't put secrets there.
+ *
  * Needs SEC_IPC and SEC_GFX (the default clearance has both). Not
  * thread-safe. All calls return -1 (or 0 / NULL) with errno on failure;
  * EPIPE means the dwm went away.
@@ -131,4 +157,31 @@ typedef struct {
 // 0, or -1 with errno (EINVAL: nothing to show / window hidden, EBADF).
 int wm_menu_show(wm_window_t window, int32_t x, int32_t y, const wm_menu_item_t* items, size_t count);
 
+// Clipboard. All connect first if needed; 0 (or the data), or -1 / NULL with
+// errno (EINVAL bad description, E2BIG over WM_CLIP_MAX, ENOENT empty).
+int   wm_clip_set(const wm_clip_info_t* info, const void* data);    // type, flags, size, width, height, format
+int   wm_clip_set_text(const char* text);
+int   wm_clip_set_files(const char* const* paths, size_t count, bool cut);
+int   wm_clip_set_image(const uint32_t* pixels, int32_t width, int32_t height);
+int   wm_clip_set_binary(const char* format, const void* data, size_t size);
+int   wm_clip_info(wm_clip_info_t* out);                             // type WM_CLIP_NONE: empty
+void* wm_clip_get(wm_clip_info_t* out);     // malloc'd copy with a 0 after it: free() it
+int   wm_clip_clear(uint32_t serial);       // Only if it still holds that item (0: anything)
+const char* wm_clip_type_name(uint32_t type);   // "text", "an image", "files", ...
+
+// Say that files changed at or below `path` (a copy, move or delete): every
+// program showing folders gets WM_EVENT_FS_CHANGED to re-read them, and the
+// desktop re-reads its icons. Connects first if needed. 0, or -1 with errno.
+int wm_fs_changed(const char* path);
+
+// Show a notification for WM_NOTIFY_DEFAULT_MS. Connects to the dwm first
+// if needed (without waiting for it). 0, or -1 with errno (ENOENT: no dwm).
+int wm_notify(const char* title, const char* message);
+
+// With a kind (WM_NOTIFY_INFO / WM_NOTIFY_ERROR) and a timeout
+// (WM_NOTIFY_STICKY: until clicked; at most WM_NOTIFY_MAX_MS). Longer title
+// or message text is cut (WM_NOTIFY_TITLE_MAX / WM_NOTIFY_TEXT_MAX).
+int wm_notify_ex(uint32_t kind, const char* title, const char* message, uint32_t timeout_ms);
+
 #endif
+

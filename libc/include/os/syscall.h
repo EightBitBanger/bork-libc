@@ -72,7 +72,11 @@
 #define SYS_GETHOME    47   // (buf, size)              home path length
 #define SYS_TIME       48   // (uint64_t* ms)           0, milliseconds since boot
 #define SYS_INPUT_WARP 49   // (handle, x, y, SysInputEvent* scratch)  0, pointer moved
-#define SYS_COUNT      50
+#define SYS_SPAWN      50   // (path, argv or 0, cwd or 0, mask)       process id (needs SYS_SEC_EXEC)
+#define SYS_FINFO      51   // (path, SysFileInfo*)     0
+#define SYS_CHMOD      52   // (path, permissions)      0
+#define SYS_SYNC       53   // ()                       0, every file system written out
+#define SYS_COUNT      54
 
 #define SYS_OK               0
 #define SYS_ENOSYS          -1
@@ -96,7 +100,8 @@
 #define SYS_ESRCH          -19  // No such process
 #define SYS_EAGAIN         -20  // Not now (nothing queued, queue full)
 #define SYS_EPIPE          -21  // The other end of the pipe is closed
-#define SYS_EBADFMT        -22  // Not a resource file this kernel can load
+#define SYS_EBADFMT        -22  // Not a resource file / executable this kernel can load
+#define SYS_E2BIG          -23  // Argument list too long (SYS_SPAWN)
 
 #define SYS_ERROR_MIN       -4095
 #define SYS_IS_ERROR(r)     ((uint32_t)(r) >= (uint32_t)SYS_ERROR_MIN)
@@ -108,6 +113,13 @@
 #define SYS_FD_FIRST        3
 #define SYS_RW_MAX          (1024U * 1024U)
 #define SYS_OFFSET_MAX      0x7FFFFFFFU
+
+/* SYS_SPAWN (see the "Processes" section of the kernel's syscall.h). Every
+   program starts with argc, argv[], NULL, envp NULL on its stack; crt0 hands
+   that to __libc_start. */
+#define SYS_SPAWN_INHERIT   0xFFFFFFFFu     // mask: the caller's own
+#define SYS_ARG_MAX         64              // Strings in argv
+#define SYS_ARG_BYTES       4096            // Bytes of them, terminators included
 
 #define SYS_FD_STDIN        0
 #define SYS_FD_STDOUT       1
@@ -140,11 +152,12 @@
 #define SYS_SEC_GFX_SCREEN  0x00000010u
 #define SYS_SEC_IPC         0x00000020u
 #define SYS_SEC_INPUT       0x00000040u
+#define SYS_SEC_EXEC        0x00000080u
 #define SYS_SEC_ADMIN       0x00000100u
 #define SYS_SEC_NONE        0x00000000u
 #define SYS_SEC_VALID       (SYS_SEC_FILE_READ | SYS_SEC_FILE_WRITE | SYS_SEC_CONSOLE | \
                              SYS_SEC_GFX | SYS_SEC_GFX_SCREEN | SYS_SEC_IPC | \
-                             SYS_SEC_INPUT | SYS_SEC_ADMIN)
+                             SYS_SEC_INPUT | SYS_SEC_EXEC | SYS_SEC_ADMIN)
 
 typedef struct {
     uint32_t size;
@@ -155,6 +168,21 @@ typedef struct {
 } SysStat;
 
 _Static_assert(sizeof(SysStat) == 20, "SysStat is part of the kernel ABI");
+
+/* SYS_FINFO / SYS_CHMOD: see "File details" in the kernel's syscall.h */
+#define SYS_FINFO_DEVICE    0x0001  // A storage device's root: device_* are filled in
+#define SYS_FINFO_ACCESS    0x0002  // The caller's clearance covers `security`
+#define SYS_FINFO_CHMOD     0x0004  // SYS_CHMOD on it would be allowed for the caller
+
+typedef struct {
+    uint32_t security;          // SYS_SEC_* bits the file requires (0: anyone)
+    uint32_t flags;             // SYS_FINFO_*
+    uint32_t device_used;       // DEVICE: as the device reports them
+    uint32_t device_capacity;
+    uint32_t reserved[4];
+} SysFileInfo;
+
+_Static_assert(sizeof(SysFileInfo) == 32, "SysFileInfo is part of the kernel ABI");
 
 /* Graphics surfaces and the SYS_GFX_SUBMIT command format: see the
    "Graphics" section of kernel/syscall/syscall.h, and os/gfx.h for the
@@ -469,5 +497,6 @@ static inline int32_t syscall4(uint32_t n, uint32_t a1, uint32_t a2, uint32_t a3
 static inline int32_t syscall5(uint32_t n, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5) { return __SYSCALL(n, a1, a2, a3, a4, a5); }
 
 #endif
+
 
 
