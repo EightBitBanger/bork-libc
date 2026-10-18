@@ -1,4 +1,4 @@
-# bork`d libc
+# libc for the bork kernel user space
 
 A freestanding C library for ring 3 programs on this kernel. Every call goes
 through the `int 0x81` gate (`include/os/syscall.h`); the public API follows
