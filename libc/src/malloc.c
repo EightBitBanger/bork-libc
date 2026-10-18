@@ -14,7 +14,7 @@
  *   PREV_INUSE the chunk before it is allocated; when it is not, prev_size
  *              holds that chunk's size, so free() can merge backwards
  *
- * No two free chunks are ever adjacent: free() merges with both neighbours.
+ * No two free chunks are ever adjacent: free() merges with both neighbors.
  * The last chunk is "top", the free space up to the break. It is never in a
  * bin; it is grown with sbrk when nothing fits, and shrunk again (memory
  * returned to the kernel) once more than TRIM_THRESHOLD of it is free.
@@ -219,7 +219,7 @@ static bool heap_grow(size_t need) {
     brk_end = (char*)new_end;
 
     if (freed)
-        chunk_free(freed);      // Goes to a bin: its neighbour is the fence
+        chunk_free(freed);      // Goes to a bin: its neighbor is the fence
 
     return csize(top) >= need;
 }
@@ -265,7 +265,7 @@ static void chunk_shrink(chunk_t* c, size_t size) {
     chunk_free(tail);           // Merges with whatever follows
 }
 
-// Free a chunk: merge with free neighbours, then bin it or fold it into top
+// Free a chunk: merge with free neighbors, then bin it or fold it into top
 static void chunk_free(chunk_t* c) {
     size_t size = csize(c);
     chunk_t* next = cnext(c);
@@ -424,7 +424,7 @@ void* realloc(void* ptr, size_t n) {
             return ptr;
         }
     } else if (!(next->head & INUSE) && cur + csize(next) >= size) {
-        // ... or into a free neighbour
+        // ... or into a free neighbor
         bin_remove(next);
         c->head = (cur + csize(next)) | INUSE | (c->head & PREV_INUSE);
         cnext(c)->head |= PREV_INUSE;
@@ -551,3 +551,4 @@ int malloc_check(void) {
     }
     return free_in_walk == free_in_bins ? 0 : -1;
 }
+

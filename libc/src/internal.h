@@ -28,3 +28,4 @@ int __vformat(__emit_fn emit, void* ctx, const char* fmt, va_list ap);
 void __stdio_exit(void);
 
 #endif
+

@@ -1,4 +1,3 @@
-
 /*
  * Process security clearance (os/security.h) on SYS_SEC_GET / SYS_SEC_SET.
  */
@@ -207,4 +206,5 @@ int sec_parse(const char* text, sec_mask_t* out) {
     *out = mask;
     return 0;
 }
+
 

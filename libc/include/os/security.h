@@ -1,4 +1,3 @@
-
 #ifndef _OS_SECURITY_H
 #define _OS_SECURITY_H
 
@@ -63,11 +62,10 @@ typedef uint32_t sec_mask_t;
 // This process
 //
 
-// This process's mask. Never fails (SEC_NONE only if the kernel refuses,
-// which it does not for a process asking about itself).
+// Get this process's security mask
 sec_mask_t sec_get(void);
 
-// True when this process holds every bit in `bits`
+// True when this process matches `bits`
 bool sec_has(sec_mask_t bits);
 
 // True when this process may change security masks
@@ -122,4 +120,5 @@ int sec_format(sec_mask_t mask, char* buf, size_t size);
 int sec_parse(const char* text, sec_mask_t* out);
 
 #endif
+
 

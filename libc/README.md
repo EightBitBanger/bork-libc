@@ -61,12 +61,14 @@ included (`src/divdi3.c`).
 | `unistd.h` `fcntl.h` | `open` `read` `write` `lseek` `close`, `unlink` `rmdir` `truncate` `access` `chdir` `getcwd` `isatty` `sbrk` `brk` `getpid` `sleep` `usleep` `_exit` |
 | `sys/stat.h` `dirent.h` | `stat` `fstat` `mkdir`, `opendir` `readdir` `rewinddir` `closedir` (with `d_type`) |
 | `ctype.h` `errno.h` `assert.h` `limits.h` `sched.h` | as standard (Linux errno numbering) |
-| `os/os.h` | kernel-specific: `os_print`, `os_copy` (whole trees), `os_rename` (same directory), `os_sleep_ms`, `os_abspath` |
+| `os/os.h` | kernel-specific: `os_print`, `os_copy` (whole trees), `os_rename` (same directory), `os_sleep_ms`, `os_abspath`, `os_gethome` (home device root, also `$HOME`), `os_syspath` (`<home>/sys/...`), `os_time_ms` |
 | `os/security.h` | process security clearance: `sec_get` `sec_has` `sec_is_admin`, `sec_get_process` `sec_set_process` `sec_grant` `sec_revoke` `sec_drop`, `sec_format` `sec_parse` |
 | `os/gfx.h` | 2D graphics on the kernel's gfx layer: surfaces, shapes, gradients, pie charts, text, blits, images, presenting to the screen |
 | `os/ipc.h` | message pipes, named ports, shared memory blocks, waiting on several handles: `ipc_pipe` `ipc_port_create` `ipc_connect` `ipc_accept` `ipc_send` `ipc_recv` `ipc_wait`, blocking `*_wait` helpers, `shm_create` `shm_map` `shm_unmap` |
-| `os/input.h` | keyboard and mouse: `input_open` `input_read` `input_wait` `input_close` |
-| `os/resource.h` | resource files: `resource_load` (by path), `resource_get` (by name), `resource_info`; draw with `gfx_draw_resource` / `gfx_draw_resource_rect` |
+| `os/wm.h` | windows from the `dwm` process: `wm_connect` `wm_window_create` `wm_window_surface` `wm_window_commit` `wm_wait_event` …; protocol in `os/wm_proto.h` |
+| `os/input.h` | keyboard and mouse: `input_open` `input_read` `input_wait` `input_close` `input_warp` |
+| `time.h` | time since boot: `clock_gettime` (`CLOCK_MONOTONIC`), `clock_getres`, `clock`, `nanosleep` (no calendar clock yet) |
+| `os/resource.h` | resource files: `resource_load` (by path), `resource_get` (by name), `resource_info`, `resource_load_system` (`<home>/sys/images/<name>`); draw with `gfx_draw_resource` / `gfx_draw_resource_rect` |
 
 `printf` supports `%d i u o x X c s p n % f F e E g G a A`, all flags, `*`
 width/precision and `hh h l ll j z t L`. Floats are converted exactly (every
@@ -144,6 +146,33 @@ ipc_send_wait(c, buf, n, 0);
   last handle.
 - **`ipc_wait`** takes up to 32 `{handle, events}` items (readable,
   writable; hangup is always reported) and a timeout (0 polls, `IPC_FOREVER`).
+
+### Windows (`os/wm.h`)
+
+```c
+wm_connect(5000);                           // Wait up to 5 s for the dwm
+wm_window_desc_t d = { .title = "Hello", .x = WM_POS_DEFAULT, .y = WM_POS_DEFAULT,
+                       .width = 320, .height = 200, .style = WM_STYLE_RESIZABLE };
+wm_window_t win = wm_window_create(&d);
+gfx_surface_t* s = wm_window_surface(win);  // Draw with os/gfx.h as usual
+gfx_clear(s, GFX_RGB(20, 20, 32));
+wm_window_commit(win, NULL);                // Window appears with its first commit
+wm_event_t ev;
+while (wm_wait_event(&ev, -1) > 0 && ev.type != WM_EVENT_CLOSE)
+    if (ev.type == WM_EVENT_RESIZED) { /* redraw */ wm_window_commit(win, NULL); }
+wm_disconnect();
+```
+
+The dwm registers the IPC port `sys.dwm` (a `sys.` name, so only an admin
+process can claim it). Each window's pixels live in a shared-memory buffer
+the program fills from its own gfx surface on commit; the dwm paints the
+window from it and sends the window's events back down the pipe. The
+program never draws on the screen, so it needs only `SEC_IPC` and `SEC_GFX`
+(both in the default clearance). On resize the library makes a new buffer
+(old picture copied in) before handing out `WM_EVENT_RESIZED`. Closing the
+connection, or exiting, closes every window. `examples/wm_demo.c` is a
+complete program; `test/wm_test.c` runs it all against the kernel's `ipc.c`
+and the DWM's own sources.
 
 ### Input (`os/input.h`)
 
@@ -257,7 +286,7 @@ Your process loader wasn't part of the code I saw, so two things are guesses:
 These would let the standard functions that are missing or stubbed here work:
 
 - console input on fd 0 → `stdin`, `getchar`, `fgets(stdin)`
-- a clock (`SYS_TIME`/`SYS_CLOCK`) → `time.h`
+- a calendar clock (RTC) → `time()`, `CLOCK_REALTIME`, dates
 - `SYS_SPAWN`/`exec` + `wait` → `system`, `posix_spawn` (a child should get
   at most its parent's security mask, unless the parent is an admin)
 - `SYS_FTRUNCATE`, `SYS_DUP` → `ftruncate`, `dup`/`dup2`, `freopen` on std streams
@@ -301,4 +330,6 @@ Linux. The test programs are then linked exactly like real programs
   heap verification, stdio round trips, directories, rename, errno paths,
   qsort, security masks (the shim enforces the kernel's per-call rules) and
   the exit path.
+
+
 

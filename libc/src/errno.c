@@ -1,4 +1,3 @@
-
 #include <errno.h>
 #include <string.h>
 #include "internal.h"
@@ -74,4 +73,5 @@ char* strerror(int e) {
         default:            return "Unknown error";
     }
 }
+
 

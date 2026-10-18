@@ -1,4 +1,3 @@
-
 #ifndef _OS_GFX_H
 #define _OS_GFX_H
 
@@ -227,4 +226,5 @@ void gfx_draw_pixels_keyed(gfx_surface_t* s, const uint32_t* pixels, int32_t wid
                            int32_t stride, int32_t x, int32_t y, gfx_color_t key);
 
 #endif
+
 

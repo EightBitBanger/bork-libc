@@ -1,4 +1,3 @@
-
 /*
  * 2D graphics: kernel surfaces drawn by batched commands (see os/gfx.h and
  * the "Graphics" section of the kernel's syscall.h for the format).
@@ -510,4 +509,5 @@ void gfx_draw_pixels_keyed(gfx_surface_t* s, const uint32_t* px, int32_t w, int3
                            int32_t stride, int32_t x, int32_t y, gfx_color_t key) {
     pixels(s, px, w, h, stride, x, y, SYS_GFX_F_KEYED, key);
 }
+
 

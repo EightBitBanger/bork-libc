@@ -1,4 +1,3 @@
-
 #ifndef _OS_SYSCALL_H
 #define _OS_SYSCALL_H
 
@@ -70,7 +69,10 @@
 #define SYS_RES_LOAD   44   // (path)                   0
 #define SYS_RES_GET    45   // (name)                   resource handle (>= 1)
 #define SYS_RES_INFO   46   // (handle, SysResInfo*)    0
-#define SYS_COUNT      47
+#define SYS_GETHOME    47   // (buf, size)              home path length
+#define SYS_TIME       48   // (uint64_t* ms)           0, milliseconds since boot
+#define SYS_INPUT_WARP 49   // (handle, x, y, SysInputEvent* scratch)  0, pointer moved
+#define SYS_COUNT      50
 
 #define SYS_OK               0
 #define SYS_ENOSYS          -1
@@ -467,4 +469,5 @@ static inline int32_t syscall4(uint32_t n, uint32_t a1, uint32_t a2, uint32_t a3
 static inline int32_t syscall5(uint32_t n, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5) { return __SYSCALL(n, a1, a2, a3, a4, a5); }
 
 #endif
+
 

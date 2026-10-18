@@ -27,6 +27,15 @@
  *   EPERM    load needs SEC_FILE_READ and SEC_GFX; get and info SEC_GFX
  *
  * Only sprites exist so far (RESOURCE_SPRITE).
+ *
+ * For an icon view, resource_open_system() does the load and the lookup in
+ * one call and is safe to repeat for every item drawn:
+ *
+ *     int folder = resource_open_system("icon_folder");   // handle, or -1
+ *     resource_info_t ri;
+ *     resource_info(folder, &ri);                          // ri.width x ri.height
+ *     gfx_draw_resource(wm_window_surface(win), folder, x, y);
+ *     wm_window_commit(win, NULL);                         // reports a bad handle
  */
 
 #include <stdint.h>
@@ -52,5 +61,18 @@ int resource_get(const char* name);
 
 // Type and size of a loaded resource. 0, or -1 with errno (EBADF).
 int resource_info(int handle, resource_info_t* out);
+
+// Load <home>/sys/images/<name>, the system image folder (where "boot
+// install" / "boot repair" put the desktop icons). Registered under <name>.
+// 0, or -1 with errno as resource_load, plus EINVAL for an empty name or one
+// with a '/', and ENOENT when there is no home device.
+int resource_load_system(const char* name);
+
+// resource_load(path), then the handle it was registered under (the last
+// part of the path). Handle, or -1 with errno as resource_load / _get.
+int resource_open(const char* path);
+
+// resource_load_system(name), then resource_get(name). Handle, or -1.
+int resource_open_system(const char* name);
 
 #endif

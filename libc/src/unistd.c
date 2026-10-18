@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -324,3 +325,41 @@ int os_copy(const char* src, const char* dest) {
 int os_rename(const char* path, const char* new_name) {
     return __sys_ret(syscall2(SYS_RENAME, (uint32_t)path, (uint32_t)new_name));
 }
+
+char* os_gethome(char* buf, size_t size) {
+    char* owned = NULL;
+    if (buf == NULL) {
+        if (size == 0) size = SYS_PATH_MAX;
+        buf = owned = (char*)malloc(size);
+        if (buf == NULL)
+            return NULL;
+    } else if (size == 0) {
+        errno = EINVAL;
+        return NULL;
+    }
+
+    if (__sys_ret(syscall2(SYS_GETHOME, (uint32_t)buf, (uint32_t)size)) < 0) {
+        free(owned);
+        return NULL;
+    }
+    return buf;
+}
+
+char* os_syspath(const char* sub, char* out, size_t size) {
+    char home[SYS_PATH_MAX];
+    if (os_gethome(home, sizeof(home)) == NULL)
+        return NULL;
+
+    while (sub != NULL && *sub == '/')
+        sub++;
+
+    int n = (sub == NULL || *sub == '\0')
+          ? snprintf(out, size, "%s/sys", home)
+          : snprintf(out, size, "%s/sys/%s", home, sub);
+    if (n < 0 || (size_t)n >= size) {
+        errno = ENAMETOOLONG;
+        return NULL;
+    }
+    return out;
+}
+

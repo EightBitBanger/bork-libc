@@ -779,3 +779,4 @@ int asprintf(char** restrict out_str, const char* restrict fmt, ...) {
     va_end(ap);
     return r;
 }
+

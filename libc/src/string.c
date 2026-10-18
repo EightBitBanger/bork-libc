@@ -281,3 +281,4 @@ char* strtok(char* restrict s, const char* restrict delim) {
     static char* save;
     return strtok_r(s, delim, &save);
 }
+

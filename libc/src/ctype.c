@@ -15,3 +15,4 @@ int isgraph(int c)  { return (unsigned)c - 33 < 94; }
 int ispunct(int c)  { return isgraph(c) && !isalnum(c); }
 int tolower(int c)  { return isupper(c) ? c + 32 : c; }
 int toupper(int c)  { return islower(c) ? c - 32 : c; }
+

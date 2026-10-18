@@ -19,6 +19,21 @@ int os_copy(const char* src, const char* dest);
 /* Rename within the same directory: new_name is a name, not a path */
 int os_rename(const char* path, const char* new_name);
 
+/* The home directory: mount root of the device that holds the system
+   folders ("/mnt/ata0p1"). Same buffer rules as getcwd(): buf NULL allocates
+   (size 0 = PATH_MAX). Returns buf, or NULL with errno ENOENT (no home
+   device), ERANGE (buf too small), EFAULT. Also in the environment as HOME. */
+char* os_gethome(char* buf, size_t size);
+
+/* "<home>/sys", or "<home>/sys/<sub>" when sub is given ("images",
+   "images/icon_folder"). Returns out, or NULL with errno (ENAMETOOLONG
+   if it does not fit, else as os_gethome). */
+char* os_syspath(const char* sub, char* out, size_t size);
+
+/* Milliseconds since boot. Monotonic (never goes back, never set); 0 if the
+   kernel has no SYS_TIME. Also as clock_gettime(CLOCK_MONOTONIC) in time.h. */
+uint64_t os_time_ms(void);
+
 /* Block for at least ms milliseconds (0 = just yield) */
 int os_sleep_ms(uint32_t ms);
 
@@ -27,3 +42,4 @@ int os_sleep_ms(uint32_t ms);
 char* os_abspath(const char* path, char* out, size_t size);
 
 #endif
+

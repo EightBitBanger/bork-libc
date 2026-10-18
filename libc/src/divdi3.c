@@ -66,3 +66,4 @@ int64_t __divmoddi4(int64_t num, int64_t den, int64_t* rem) {
     if (rem) *rem = num - q * den;
     return q;
 }
+

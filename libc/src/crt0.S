@@ -14,3 +14,4 @@ _start:
 1:  jmp     1b
 
     .section .note.GNU-stack, "", @progbits
+

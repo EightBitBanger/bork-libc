@@ -13,3 +13,4 @@ void __assert_fail(const char* expr, const char* file, int line, const char* fun
 #ifndef static_assert
 #define static_assert _Static_assert
 #endif
+

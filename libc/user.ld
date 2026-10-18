@@ -64,3 +64,4 @@ SECTIONS
         *(.interp .dynamic .dynsym .dynstr .hash .gnu.hash)
     }
 }
+

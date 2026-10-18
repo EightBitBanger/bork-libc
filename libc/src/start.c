@@ -2,10 +2,12 @@
  * Program start and end: __libc_start (called by crt0), exit, atexit, abort.
  */
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <os/os.h>
 #include "internal.h"
 
 #define ATEXIT_MAX  32
@@ -28,7 +30,18 @@ static int atexit_count = 0;
  */
 static char* empty_argv[] = { NULL };
 
+// HOME=<home> (os_gethome), so getenv("HOME") works in ported code
+static char  home_env[5 + SYS_PATH_MAX] = "HOME=";
+static char* start_environ[2] = { NULL, NULL };
+
 __attribute__((noreturn)) void __libc_start(void) {
+    // Before constructors, so they see it too. No home device: no HOME.
+    if (os_gethome(home_env + 5, SYS_PATH_MAX) != NULL) {
+        start_environ[0] = home_env;
+        environ = start_environ;
+    }
+    errno = 0;
+
     for (init_fn* f = __init_array_start; f && f < __init_array_end; f++)
         (*f)();
 
@@ -75,3 +88,4 @@ char* getenv(const char* name) {
     }
     return NULL;
 }
+

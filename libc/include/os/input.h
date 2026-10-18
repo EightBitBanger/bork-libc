@@ -70,4 +70,11 @@ int input_wait(int handle, int32_t timeout_ms);
 // Give the devices back (same as ipc_close)
 int input_close(int handle);
 
+// Move the mouse pointer to (x, y) (clamped to the screen). Only the process
+// holding the input (this handle) can. Events already queued keep their old
+// positions; the next movement starts from (x, y). 0, or -1 with errno
+// (EBADF: not an open input handle, EPERM: no SEC_INPUT).
+int input_warp(int handle, int32_t x, int32_t y);
+
 #endif
+

@@ -1,4 +1,3 @@
-
 /*
  * Pipes, ports, shared memory (os/ipc.h) and input (os/input.h) on the
  * SYS_IPC_* / SYS_SHM_* / SYS_INPUT_* calls.
@@ -162,3 +161,11 @@ int input_wait(int handle, int32_t timeout_ms) {
 int input_close(int handle) {
     return ipc_close(handle);
 }
+
+int input_warp(int handle, int32_t x, int32_t y) {
+    // The kernel checks the handle with a zero-event read into this
+    input_event_t scratch;
+    return __sys_ret(syscall4(SYS_INPUT_WARP, (uint32_t)handle, (uint32_t)x, (uint32_t)y,
+                              (uint32_t)(uintptr_t)&scratch));
+}
+
